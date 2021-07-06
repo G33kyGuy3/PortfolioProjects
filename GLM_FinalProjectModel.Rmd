@@ -1,0 +1,184 @@
+---
+title: "Employee Attrition"
+author: "Duncan Thompson"
+date: "1/28/2021"
+output:
+  html_document: default
+  word_document: default
+---
+
+This General Linear Model will predict the employees that will leave the company and the what causes the employees to leave.  Our measure of a successful model is that the accuracy of th model is within the 70% range and to have enough information to develop an employee retention plan.
+
+## Step 1:Import the data
+```{r}
+library(readxl)
+library(caret)
+library(MKmisc)
+library(pROC)
+library(Metrics)
+library(ggplot2)
+library(ROCR)
+library(InformationValue)
+library(cvms)
+EmployeeData<-read_excel("C:/Users/Hi/Desktop/Southern New Hampshire University/DAT 690 - Capstone Course/EmployeeData.xlsx")
+head(EmployeeData)
+summary(EmployeeData)
+```
+### Step 1a: Check for missing values
+```{r}
+anyNA(EmployeeData)
+```
+## Step 2: Feature Engineering
+The next step is to change the data types from character to factors and changing the Target Variable(Attrition) from Yes - employee left the company/ No - employee did not leave the company to (1-Yes/0-No).
+```{r}
+EmployeeData$Attrition[EmployeeData$Attrition == "Yes"] <- 1
+EmployeeData$Attrition[EmployeeData$Attrition == "No"] <- 0
+EmployeeData$Attrition <- as.numeric(EmployeeData$Attrition)
+EmployeeData[,c(2,4,6,7,11,15,17,22)]=lapply(EmployeeData[,c(2,4,6,7,11,15,17,22)],as.factor)
+EmployeeData$Over18[EmployeeData$Over18 == "Y"] <- 1
+EmployeeData$Over18 <- as.numeric(EmployeeData$Over18)
+```
+## Step 3: Splitting the data into "training" and "testing" datasets
+-With the training data set I will build up the model and test its accuracy using the Test Data set.
+```{r}
+set.seed(1000)
+ranuni=sample(x=c("Training","Testing"),size=nrow(EmployeeData),replace=T,prob=c(0.7,0.3))
+TrainingData=EmployeeData[ranuni=="Training",]
+TestingData=EmployeeData[ranuni=="Testing",]
+nrow(TrainingData)
+nrow(TestingData)
+```
+* The above code shows that we have successfully split the entire data set into two parts.  Now we have 886 Training data and 384 Testing data.
+
+## Step 4: Building the Model
+  + 4a. Identify the independent variables or the predictors
+  + 4b. Incorporate the dependent variables  or target "Attrition" in the model
+  + 4c. Transform the data type of the model from character to formula
+  + 4d. Incorporate Training data into the formula and build the model
+```{r}
+independentvariables=colnames(EmployeeData[,2:35])
+independentvariables
+Model=paste(independentvariables,collapse="+")
+Model
+Model_1=paste("Attrition~",Model)
+Model_1
+class(Model_1)
+formula=as.formula(Model_1)
+formula
+```
+* Now I am going to put the training data in the formula using glm() and build the logistic regression model
+```{r}
+GLMModel=glm(formula=formula,data=TrainingData,family="binomial")
+```
+* The model will be designed using the "Stepwise selection" method to get the significant variables of the model. This will allow for a better fitting model and have the best variables to make an accurate prediction
+```{r}
+GLMModel=step(object = GLMModel,direction = "both")
+summary(GLMModel)
+```
+* Based on the results we can see, Business travel (Frequently), Distance from home, Environment Satisfaction, Job Involvement, Job Satisfaction, Number of Companies Worked, Job Role ( Sales Executive, Sales Representatives, & Laboratory Technicians ), Overtime, Total Working years, Years since last promotion, Relationship Satisfaction.  All these are most significant variables in determining employee attrition.  These can be the areas that the company can focus on to reduce attrition.
+
+* Need to perform a goodness fit test on the data set, to determine the accuracy of the predicted probability of the model. I am going to use the Hoshmer-Lemeshow test.
+* The hypothesis is
++ H0: The model is a good fit if the p-value > 0.05
++ H1: The model is not a good fit if the p-value < 0.05
+```{r}
+library(MKmisc)
+HLgof.test(fit=GLMModel$fitted.values,obs=GLMModel$y)
+```
+* Based on the results of the test the model is a good fit because the p-value = 0.7487.
+
+## Save and Read Model to and from RDS file
+```{r}
+#saveRDS(GLMModel, "GLMModel.rds")
+#read.GLMModel <- readRDS("GLMModel.rds")
+```
+### Test the model with validation dataset
+```{r}
+alldata<-read_excel("C:/Users/Hi/Desktop/Southern New Hampshire University/DAT 690 - Capstone Course/EmployeeAttritionData_Verify.xlsx")
+alldata$Attrition[alldata$Attrition == "Yes"] <- 1
+alldata$Attrition[alldata$Attrition == "No"] <- 0
+alldata$Attrition <- as.numeric(alldata$Attrition)
+alldata[,c(2,4,6,7,11,15,17,22)]=lapply(alldata[,c(2,4,6,7,11,15,17,22)],as.factor)
+alldata$Over18[alldata$Over18 == "Y"] <- 1
+alldata$Over18 <- as.numeric(alldata$Over18)
+val_glmpred <- predict(object = GLMModel, newdata = alldata, type = "response")
+val_glmpred.roc <- plotROC(alldata$Attrition,val_glmpred, returnSensitivityMat = TRUE)
+val_glmpred <- ifelse(test = val_glmpred > 0.5, yes = 1, no = 0)
+table(alldata$Attrition, val_glmpred) # Displays the classification table
+val_glmpred.CM <- confusionMatrix(alldata$Attrition, val_glmpred)
+print(val_glmpred.CM)
+#calculate accuracy
+val_glmpred.accuracy <- accuracy(alldata$Attrition, val_glmpred)
+val_glmpred.accuracy
+#calculate sensitivity
+val_glmpred.sensitivity <- sensitivity(alldata$Attrition, val_glmpred)
+val_glmpred.sensitivity
+#calculate specificity
+val_glmpred.specificity <- specificity(alldata$Attrition, val_glmpred)
+val_glmpred.specificity
+# calculate precision
+val_glmpred.precision <- precision(alldata$Attrition, val_glmpred)
+val_glmpred.precision
+# calculate recall
+val_glmpred.recall <- recall(alldata$Attrition, val_glmpred)
+val_glmpred.recall
+#calculate total misclassification error rate
+val_glmpred.misClassError <- misClassError(alldata$Attrition, val_glmpred)
+val_glmpred.misClassError
+```
+## Model Evaluation
+* Applying the model for prediction
+```{r}
+GLMModel.training <- predict(object = GLMModel, newdata = TrainingData, type = "response")
+#GLMModel.testing <- predict.glm(object = GLMModel, newdata = TestingData, type = "response")
+```
+* Model performance (Displays ROC curve and AUC score)
+```{r}
+library(caret)
+library(pROC)
+```
+* ROC and AUC score
+```{r}
+#GLMModel.training.roc <- roc(TrainingData$Attrition, GLMModel.training, plot = T)
+#GLMModel.training.roc$auc
+GLMModel.train.roc <- plotROC(TrainingData$Attrition,GLMModel.training,returnSensitivityMat = TRUE)
+```
+
+__________________________________________________________________________
+
+* Model performance (Displays confusion matrix)
+```{r}
+GLMModel.training <- ifelse(test = GLMModel.training > 0.5, yes = 1, no = 0)
+table(TrainingData$Attrition, GLMModel.training) # Displays the classification table
+GLMModel.train.CM <- confusionMatrix(TrainingData$Attrition, GLMModel.training)
+print(GLMModel.train.CM)
+#GLMModel.testing <- ifelse(test = GLMModel.testing > 0.5, yes = 1, no = 0)
+#table(TestingData$Attrition, GLMModel.testing) # Displays the classification table
+#GLMModel.test.CM <- confusionMatrix(TestingData$Attrition, GLMModel.testing, threshold = optimal.GLMModel.training)
+#print(GLMModel.test.CM)
+```
+```{r}
+library(Metrics)
+```
+### Training Model Performance Statistics
+```{r}
+#calculate accuracy
+GLMModel.accuracy <- accuracy(TrainingData$Attrition, GLMModel.training)
+GLMModel.accuracy
+#calculate sensitivity
+GLMModel.sensitivity <- sensitivity(TrainingData$Attrition, GLMModel.training)
+GLMModel.sensitivity
+#calculate specificity
+GLMModel.specificity <- specificity(TrainingData$Attrition, GLMModel.training)
+GLMModel.specificity
+# calculate precision
+GLMModel.precision <- precision(TrainingData$Attrition, GLMModel.training)
+GLMModel.precision
+# calculate recall
+GLMModel.recall <- recall(TrainingData$Attrition, GLMModel.training)
+GLMModel.recall
+#calculate total misclassification error rate
+GLMModel.misClassError <- misClassError(TrainingData$Attrition, GLMModel.training)
+GLMModel.misClassError
+```
+### Based on the above statistics that the error rate of the model was 12% and the accuracy is 88%
